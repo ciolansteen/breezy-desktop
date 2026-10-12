@@ -1,0 +1,33 @@
+name: Trigger maintained Arch package
+on:
+  push:
+    branches: [iAdrian]
+  workflow_dispatch:
+concurrency:
+  group: package-dispatch-${{ gitea.ref }}
+  cancel-in-progress: true
+jobs:
+  trigger-package:
+    runs-on: source-dispatch
+    timeout-minutes: 5
+    container:
+      image: git.ciolan.net/dockers/arch-builder:latest
+      credentials:
+        username: iAdrian
+        password: ${{ secrets.CI_TOKEN }}
+    steps:
+      - name: Checkout ci-templates
+        uses: actions/checkout@v4
+        with:
+          repository: archRepo/ci-templates
+          path: .ci-templates
+          ref: main
+      - name: Dispatch maintained package
+        uses: ./.ci-templates/trigger-arch-package
+        with:
+          package_repository: archRepo/breezy-desktop-kwin-git
+          workflow_file: build.yml
+          ref: main
+          triggered_by: ${{ github.repository }}@${{ github.sha }}
+          key_rotation: 'false'
+          CI_TOKEN: ${{ secrets.CI_TOKEN }}
