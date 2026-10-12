@@ -255,3 +255,11 @@ Hashing functions are a one-way process that serve to anonymize your personal da
 For inquires about data privacy or any related concerns, please contact:
 
 Wayne Heaney - **wayne@xronlinux.com**
+
+## Maintained downstream branch
+
+The maintained branch is `iAdrian`; upstream `main` and tags remain unchanged.
+Pushes to this branch dispatch `archRepo/breezy-desktop-kwin-git` builds.
+Packages track this moving branch and require installed-artifact smoke checks
+before publication. Downstream fixes remain available independently of upstream
+review. Headless CI checks do not establish XR hardware or compositor stability.
