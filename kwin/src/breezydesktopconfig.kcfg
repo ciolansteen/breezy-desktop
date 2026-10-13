@@ -69,6 +69,11 @@
             <label>Antialiasing Quality</label>
             <description>0=None, 1=Medium, 2=High, 3=Very High</description>
         </entry>
+        <entry name="DesktopSourceOutput" type="String">
+            <default></default>
+            <label>Desktop source output</label>
+            <description>Copy this output into the central XR display. Leave empty for the XR output desktop. Requires independent outputs, not native display replication.</description>
+        </entry>
         <entry name="MirrorPhysicalDisplays" type="Bool">
             <default>false</default>
             <label>Mirror Physical Displays</label>

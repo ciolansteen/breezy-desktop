@@ -253,6 +253,7 @@ void BreezyDesktopEffect::recenter() {
 
 void BreezyDesktopEffect::setLookingAtScreenIndex(int index)
 {
+    if (m_lookingAtScreenIndex == index) return;
     m_lookingAtScreenIndex = index;
     if (m_smoothFollowEnabled) updateDriverSmoothFollowSettings();
 }
@@ -279,6 +280,11 @@ void BreezyDesktopEffect::reconfigure(ReconfigureFlags)
     int aaQuality = BreezyDesktopConfig::antialiasingQuality();
     bool removeVD = BreezyDesktopConfig::removeVirtualDisplaysOnDisable();
     bool mirrorPhysicalDisplays = BreezyDesktopConfig::mirrorPhysicalDisplays();
+    const QString desktopSourceOutput = BreezyDesktopConfig::desktopSourceOutput().trimmed();
+    if (m_desktopSourceOutput != desktopSourceOutput) {
+        m_desktopSourceOutput = desktopSourceOutput;
+        Q_EMIT desktopSourceOutputChanged();
+    }
     if (m_displayWrappingScheme != wrap) { m_displayWrappingScheme = wrap; Q_EMIT displayWrappingSchemeChanged(); }
     if (m_antialiasingQuality != aaQuality) { m_antialiasingQuality = aaQuality; Q_EMIT antialiasingQualityChanged(); }
     if (m_removeVirtualDisplaysOnDisable != removeVD) { m_removeVirtualDisplaysOnDisable = removeVD; Q_EMIT removeVirtualDisplaysOnDisableChanged(); }
@@ -861,9 +867,10 @@ void BreezyDesktopEffect::setSmoothFollowThreshold(float threshold) {
 void BreezyDesktopEffect::updateDriverSmoothFollowSettings() {
     qreal adjustedDistance = m_focusedDisplayDistance / (m_displaySize * m_allDisplaysDistance);
 
-    if (m_lookingAtScreenIndex != -1 && !m_displayResolution.isEmpty()) {
+    const auto currentScreens = effects->screens();
+    if (m_lookingAtScreenIndex >= 0 && m_lookingAtScreenIndex < currentScreens.size() && !m_displayResolution.isEmpty()) {
         // Adjust display distance by relative monitor size compared to the FOV monitor
-        const ScreenOutput *focusedOutput = effects->screens().at(m_lookingAtScreenIndex);
+        const ScreenOutput *focusedOutput = currentScreens.at(m_lookingAtScreenIndex);
         const QSize focusedSize = focusedOutput ? focusedOutput->geometry().size() : QSize();
 
         if (focusedSize.isValid()) {
@@ -1032,9 +1039,10 @@ void BreezyDesktopEffect::warpPointerToOutputCenter(ScreenOutput *output)
 
 void BreezyDesktopEffect::moveCursorToFocusedDisplay()
 {
-    if (m_lookingAtScreenIndex == -1) return;
+    const auto currentScreens = effects->screens();
+    if (m_lookingAtScreenIndex < 0 || m_lookingAtScreenIndex >= currentScreens.size()) return;
 
-    warpPointerToOutputCenter(effects->screens().at(m_lookingAtScreenIndex));
+    warpPointerToOutputCenter(currentScreens.at(m_lookingAtScreenIndex));
 }
 }
 

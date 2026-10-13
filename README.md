@@ -263,3 +263,20 @@ Pushes to this branch dispatch `archRepo/breezy-desktop-kwin-git` builds.
 Packages track this moving branch and require installed-artifact smoke checks
 before publication. Downstream fixes remain available independently of upstream
 review. Headless CI checks do not establish XR hardware or compositor stability.
+
+
+### Central desktop content mirroring (KWin)
+
+The optional **Central XR desktop source** field in Advanced settings accepts an
+output name, such as the laptop panel name reported by `kscreen-doctor -o`.
+Breezy copies that output's desktop into the central XR display and leaves the
+source output showing its ordinary desktop. Other virtual displays keep their
+existing placement and content. An empty field preserves the original behavior;
+a source that is disconnected falls back to the XR output desktop.
+
+Keep the XR display and source output independent in Plasma Display Configuration.
+Native display cloning shares the final composited image and cannot keep the
+laptop desktop normal while showing a different XR scene in the glasses.
+This content-mirroring option does not change output positions or recreate displays.
+
+Run the focused behavior tests with `node kwin/tests/desktop-sources.test.cjs`.

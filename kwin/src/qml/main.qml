@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick3D
 import org.kde.kwin as KWinComponents
 import org.kde.kwin.effect.breezy_desktop
+import "DesktopSources.js" as DesktopSources
 
 Item {
     id: root
@@ -35,8 +36,15 @@ Item {
     property var viewportResolution: effect.displayResolution
     property bool mirrorPhysicalDisplays: effect.mirrorPhysicalDisplays
     property bool developerMode: effect.developerMode
+    property var desktopMirrorSource: DesktopSources.resolveCaptureSource(
+        targetScreen, targetScreen, effect.desktopSourceOutput, KWinComponents.Workspace.screens)
     property var screens: KWinComponents.Workspace.screens.filter(function(screen) {
+        if (targetScreenSupported && desktopMirrorSource !== targetScreen && screen === desktopMirrorSource) return false;
         return developerMode || mirrorPhysicalDisplays || screen.name.includes("BreezyDesktop") || supportedModels.some(model => screen.model.includes(model));
+    })
+    property var captureScreens: screens.map(function(screen) {
+        return DesktopSources.resolveCaptureSource(screen, targetScreen,
+            targetScreenSupported ? effect.desktopSourceOutput : "", KWinComponents.Workspace.screens);
     })
     property real distanceAdjustedSize: (effect.allDisplaysDistance - effect.lensDistanceRatio) * effect.displaySize
     property var sizeAdjustedScreens: screens.map(function(screen) {
@@ -150,6 +158,7 @@ Item {
             BreezyDesktop {
                 id: breezyDesktop
                 screens: root.screens
+                captureScreens: root.captureScreens
                 sizeAdjustedScreens: root.sizeAdjustedScreens
                 fovDetails: root.fovDetails
                 monitorPlacements: root.monitorPlacements
