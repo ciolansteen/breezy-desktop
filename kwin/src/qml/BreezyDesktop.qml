@@ -10,7 +10,7 @@ Node {
     property var viewportResolution: effect.displayResolution
     property bool smoothFollowEnabled: effect.smoothFollowEnabled
     required property var screens
-    required property var captureScreens
+
     required property var sizeAdjustedScreens
     required property var fovDetails
     required property var monitorPlacements
@@ -45,7 +45,7 @@ Node {
             );
 
             effect.lookingAtScreenIndex = DesktopSources.workspaceIndex(
-                lookingAtIndex, captureScreens, KWinComponents.Workspace.screens);
+                lookingAtIndex, screens, KWinComponents.Workspace.screens);
             if (breezyDesktop.lookingAtMonitorIndex !== lookingAtIndex) {
                 breezyDesktop.lookingAtMonitorIndex = lookingAtIndex;
             }
@@ -165,7 +165,7 @@ Node {
         model: breezyDesktop.screens.length
         delegate: BreezyDesktopDisplay {
             screen: breezyDesktop.screens[index]
-            captureScreen: breezyDesktop.captureScreens[index]
+
             sizeAdjustedScreen: breezyDesktop.sizeAdjustedScreens[index]
             monitorPlacement: breezyDesktop.monitorPlacements[index]
             fovDetails: breezyDesktop.fovDetails
@@ -270,10 +270,6 @@ Node {
         }
     }
 
-    onCaptureScreensChanged: {
-        breezyDesktop.lookingAtMonitorIndex = -1;
-        effect.lookingAtScreenIndex = -1;
-    }
 
     // release references to displays and stale indexes
     onScreensChanged: {

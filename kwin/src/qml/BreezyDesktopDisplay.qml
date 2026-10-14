@@ -5,7 +5,7 @@ Model {
     id: display
 
     required property var screen
-    property var captureScreen: screen
+
     required property var sizeAdjustedScreen
     required property var monitorPlacement
     required property int index
@@ -52,10 +52,10 @@ Model {
             depthDrawMode: CustomMaterial.AlwaysDepthDraw
             shadingMode: CustomMaterial.Unshaded
 
-            property real screenWidth: display.captureScreen.geometry.width
-            property real screenHeight: display.captureScreen.geometry.height
-            property real cursorX: display.cursorPos.x - display.captureScreen.geometry.x
-            property real cursorY: display.cursorPos.y - display.captureScreen.geometry.y
+            property real screenWidth: display.screen.geometry.width
+            property real screenHeight: display.screen.geometry.height
+            property real cursorX: display.cursorPos.x - display.screen.geometry.x
+            property real cursorY: display.cursorPos.y - display.screen.geometry.y
             property real cursorW: display.cursorImageSize.width
             property real cursorH: display.cursorImageSize.height
             property bool showCursor: cursorX >= 0 && cursorX < screenWidth && cursorY >= 0 && cursorY < screenHeight
@@ -63,9 +63,9 @@ Model {
             property TextureInput desktopTex: TextureInput {
                 texture: Texture {
                     sourceItem: DesktopView {
-                        screen: display.captureScreen
-                        width: display.captureScreen.geometry.width
-                        height: display.captureScreen.geometry.height
+                        screen: display.screen
+                        width: display.screen.geometry.width
+                        height: display.screen.geometry.height
                     }
                 }
             }

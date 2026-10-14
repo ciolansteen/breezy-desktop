@@ -400,11 +400,7 @@ void BreezyDesktopEffect::reconfigure(ReconfigureFlags)
     int aaQuality = BreezyDesktopConfig::antialiasingQuality();
     bool removeVD = BreezyDesktopConfig::removeVirtualDisplaysOnDisable();
     bool mirrorPhysicalDisplays = BreezyDesktopConfig::mirrorPhysicalDisplays();
-    const QString desktopSourceOutput = BreezyDesktopConfig::desktopSourceOutput().trimmed();
-    if (m_desktopSourceOutput != desktopSourceOutput) {
-        m_desktopSourceOutput = desktopSourceOutput;
-        Q_EMIT desktopSourceOutputChanged();
-    }
+
     if (m_displayWrappingScheme != wrap) { m_displayWrappingScheme = wrap; Q_EMIT displayWrappingSchemeChanged(); }
     if (m_antialiasingQuality != aaQuality) { m_antialiasingQuality = aaQuality; Q_EMIT antialiasingQualityChanged(); }
     if (m_removeVirtualDisplaysOnDisable != removeVD) { m_removeVirtualDisplaysOnDisable = removeVD; Q_EMIT removeVirtualDisplaysOnDisableChanged(); }

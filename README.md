@@ -265,18 +265,11 @@ before publication. Downstream fixes remain available independently of upstream
 review. Headless CI checks do not establish XR hardware or compositor stability.
 
 
-### Central desktop content mirroring (KWin)
+### Physical displays and focus identity (KWin)
 
-The optional **Central XR desktop source** field in Advanced settings accepts an
-output name, such as the laptop panel name reported by `kscreen-doctor -o`.
-Breezy copies that output's desktop into the central XR display and leaves the
-source output showing its ordinary desktop. Other virtual displays keep their
-existing placement and content. An empty field preserves the original behavior;
-a source that is disconnected falls back to the XR output desktop.
-
-Keep the XR display and source output independent in Plasma Display Configuration.
-Native display cloning shares the final composited image and cannot keep the
-laptop desktop normal while showing a different XR scene in the glasses.
-This content-mirroring option does not change output positions or recreate displays.
+Use the existing **Mirror Physical Displays** setting to include physical outputs
+in the XR scene. Each panel captures its own output; no separate central desktop
+source setting is required. Focus maps the filtered scene output back to its live
+workspace output identity, including after output reordering or removal.
 
 Run the focused behavior tests with `node kwin/tests/desktop-sources.test.cjs`.

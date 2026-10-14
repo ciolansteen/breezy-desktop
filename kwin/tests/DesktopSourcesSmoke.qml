@@ -8,7 +8,8 @@ QtObject {
     property QtObject glasses: QtObject { property string name: "glasses" }
     property QtObject virtualDisplay: QtObject { property string name: "Virtual-BreezyDesktop_1" }
     property var workspaceScreens: [panel, glasses, virtualDisplay]
-    property var captureScreen: DesktopSources.resolveCaptureSource(glasses, glasses, "panel", workspaceScreens)
+    property var sceneScreens: [glasses, virtualDisplay]
+    property int focusedWorkspaceIndex: DesktopSources.workspaceIndex(0, sceneScreens, workspaceScreens)
     property int checksPassed: 0
 
     function check(condition, message) {
@@ -16,17 +17,16 @@ QtObject {
         checksPassed++;
     }
     function runChecks() {
-        check(captureScreen === panel, "configured source is not the panel");
-        check(DesktopSources.resolveCaptureSource(glasses, glasses, "", workspaceScreens) === glasses, "default changed");
-        check(DesktopSources.resolveCaptureSource(virtualDisplay, glasses, "panel", workspaceScreens) === virtualDisplay, "virtual changed");
-        check(DesktopSources.workspaceIndex(0, [panel, virtualDisplay], workspaceScreens) === 0, "source focus wrong");
-        check(DesktopSources.workspaceIndex(1, [panel, virtualDisplay], workspaceScreens) === 2, "virtual focus wrong");
+        check(focusedWorkspaceIndex === 1, "filtered scene focus wrong");
+        check(DesktopSources.workspaceIndex(1, sceneScreens, workspaceScreens) === 2, "virtual focus wrong");
         workspaceScreens = [virtualDisplay, replacementPanel, glasses];
-        check(captureScreen === replacementPanel, "binding retained the retired source");
-        check(DesktopSources.workspaceIndex(0, [replacementPanel], workspaceScreens) === 1, "reordered focus wrong");
-        workspaceScreens = [glasses, virtualDisplay];
-        check(captureScreen === glasses, "missing-source fallback failed");
-        check(DesktopSources.workspaceIndex(0, [replacementPanel], workspaceScreens) === -1, "stale source index accepted");
-        check(DesktopSources.workspaceIndex(99, [glasses], workspaceScreens) === -1, "invalid index accepted");
+        check(focusedWorkspaceIndex === 2, "binding did not follow output reorder");
+        check(DesktopSources.workspaceIndex(1, sceneScreens, workspaceScreens) === 0, "reordered virtual focus wrong");
+        sceneScreens = [panel];
+        check(focusedWorkspaceIndex === -1, "retired output accepted");
+        sceneScreens = [replacementPanel];
+        check(focusedWorkspaceIndex === 1, "replacement output focus wrong");
+        check(DesktopSources.workspaceIndex(-1, sceneScreens, workspaceScreens) === -1, "negative index accepted");
+        check(DesktopSources.workspaceIndex(99, sceneScreens, workspaceScreens) === -1, "invalid index accepted");
     }
 }

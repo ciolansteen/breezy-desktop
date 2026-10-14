@@ -65,7 +65,7 @@ namespace KWin
         Q_PROPERTY(int antialiasingQuality READ antialiasingQuality NOTIFY antialiasingQualityChanged)
         Q_PROPERTY(bool removeVirtualDisplaysOnDisable READ removeVirtualDisplaysOnDisable NOTIFY removeVirtualDisplaysOnDisableChanged)
         Q_PROPERTY(bool mirrorPhysicalDisplays READ mirrorPhysicalDisplays NOTIFY mirrorPhysicalDisplaysChanged)
-        Q_PROPERTY(QString desktopSourceOutput READ desktopSourceOutput NOTIFY desktopSourceOutputChanged)
+
         Q_PROPERTY(bool curvedDisplay READ curvedDisplay NOTIFY curvedDisplayChanged)
         Q_PROPERTY(bool curvedDisplaySupported READ curvedDisplaySupported WRITE setCurvedDisplaySupported NOTIFY curvedDisplaySupportedChanged)
         Q_PROPERTY(bool developerMode READ developerMode NOTIFY developerModeChanged)
@@ -121,7 +121,7 @@ namespace KWin
         int antialiasingQuality() const;
         bool removeVirtualDisplaysOnDisable() const;
         bool mirrorPhysicalDisplays() const;
-        QString desktopSourceOutput() const { return m_desktopSourceOutput; }
+
         bool curvedDisplay() const;
         bool developerMode() const;
         void setCurvedDisplaySupported(bool supported);
@@ -164,7 +164,7 @@ namespace KWin
         void antialiasingQualityChanged();
         void removeVirtualDisplaysOnDisableChanged();
         void mirrorPhysicalDisplaysChanged();
-        void desktopSourceOutputChanged();
+
         void curvedDisplayChanged();
         void curvedDisplaySupportedChanged();
         void developerModeChanged();
@@ -237,7 +237,7 @@ namespace KWin
         bool m_removeVirtualDisplaysOnDisable = true;
         bool m_virtualDisplayProfileReadable = true;
         QString m_virtualDisplayRestoreError;
-        QString m_desktopSourceOutput;
+
         bool m_mirrorPhysicalDisplays = false;
         bool m_curvedDisplay = false;
         bool m_curvedDisplaySupported = false;
