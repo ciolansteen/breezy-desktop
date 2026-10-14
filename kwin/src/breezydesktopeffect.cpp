@@ -11,6 +11,11 @@
 #include "effect/effecthandler.h"
 #include "opengl/glutils.h"
 #include "xrdriveripc.h"
+#include "pluginbuildid.h"
+#include <QQmlComponent>
+#include <QQmlEngine>
+#include <QElapsedTimer>
+#include <memory>
 
 #include <kwin/main.h>
 #include <core/outputbackend.h>
@@ -65,6 +70,9 @@ public Q_SLOTS:
         return m_effect->curvedDisplaySupported();
     }
 
+    QVariantMap ReloadScene() { return m_effect->reloadScene(); }
+    QVariantMap ReloadStatus() const { return m_effect->reloadStatus(); }
+
     private:
         KWin::BreezyDesktopEffect *m_effect;
     };
@@ -112,6 +120,106 @@ namespace DataView
 namespace KWin
 {
 
+namespace {
+QVariantMap binaryIdentity()
+{
+    const auto loaded = PluginBuildId::fromAddress(reinterpret_cast<const void *>(&binaryIdentity));
+    const auto installed = PluginBuildId::fromFile(loaded.path);
+    return {{QStringLiteral("loadedBuildId"), QString::fromLatin1(loaded.id)},
+            {QStringLiteral("installedBuildId"), QString::fromLatin1(installed)},
+            {QStringLiteral("pluginPath"), loaded.path},
+            {QStringLiteral("binaryCurrent"), !loaded.id.isEmpty() && loaded.id == installed}};
+}
+
+QStringList outputLayout()
+{
+    QStringList result;
+    for (auto *screen : effects->screens()) {
+        const auto g = screen->geometry();
+        result << QStringLiteral("%1:%2,%3,%4,%5:%6")
+            .arg(screen->name()).arg(g.x()).arg(g.y()).arg(g.width()).arg(g.height()).arg(screen->scale());
+    }
+    result.sort();
+    return result;
+}
+}
+
+QVariantMap BreezyDesktopEffect::reloadStatus() const
+{
+    auto status = m_reloadStatus;
+    const auto identity = binaryIdentity();
+    for (auto it = identity.cbegin(); it != identity.cend(); ++it) status.insert(it.key(), it.value());
+    status.insert(QStringLiteral("running"), isRunning());
+    return status;
+}
+
+QVariantMap BreezyDesktopEffect::reloadScene()
+{
+    if (m_reloadStatus.value(QStringLiteral("state")) == QStringLiteral("pending")) {
+        return {{QStringLiteral("state"), QStringLiteral("busy")},
+                {QStringLiteral("error"), QStringLiteral("A scene reload is already pending.")}};
+    }
+    if (m_sessionClassBlocked || source().isEmpty()
+        || (effects->activeFullScreenEffect() && effects->activeFullScreenEffect() != this)) {
+        return {{QStringLiteral("state"), QStringLiteral("blocked")},
+                {QStringLiteral("error"), QStringLiteral("Scene unavailable or another full-screen effect is active.")}};
+    }
+    const auto originalSource = source();
+    const auto layout = outputLayout();
+    m_reloadStatus = {{QStringLiteral("state"), QStringLiteral("pending")},
+                     {QStringLiteral("outputsPreserved"), false}};
+    QTimer::singleShot(0, this, [this, originalSource, layout]() {
+        if (effects->activeFullScreenEffect() && effects->activeFullScreenEffect() != this) {
+            m_reloadStatus.insert(QStringLiteral("state"), QStringLiteral("blocked"));
+            m_reloadStatus.insert(QStringLiteral("error"), QStringLiteral("Another full-screen effect became active."));
+            return;
+        }
+        const bool wasRunning = isRunning() || m_enabled;
+        // Do not call deactivate(): it can delete the user's virtual outputs.
+        setRunning(false);
+        setSource(QUrl());
+        effects->qmlEngine()->clearComponentCache();
+        reconfigure(ReconfigureAll);
+        m_effectTargetScreenIndex = -1;
+        m_lookingAtScreenIndex = -1;
+        invalidateEffectOnScreenGeometryCache();
+        showCursor();
+        setSource(originalSource);
+        if (!wasRunning) {
+            m_reloadStatus.insert(QStringLiteral("state"), QStringLiteral("inactive"));
+            m_reloadStatus.insert(QStringLiteral("outputsPreserved"), layout == outputLayout());
+            return;
+        }
+        activate();
+        auto *poll = new QTimer(this);
+        poll->setInterval(50);
+        auto elapsed = std::make_shared<QElapsedTimer>();
+        elapsed->start();
+        connect(poll, &QTimer::timeout, this, [this, poll, elapsed, layout]() {
+            bool ready = isRunning() && delegate() && delegate()->isReady() && !effects->screens().isEmpty();
+            for (auto *screen : effects->screens()) {
+                auto *view = viewForScreen(screen);
+                ready = ready && view && view->rootItem();
+            }
+            const bool failed = !isRunning() || (delegate() && delegate()->isError()) || elapsed->elapsed() > 4000;
+            if (!ready && !failed) return;
+            const bool preserved = layout == outputLayout();
+            m_reloadStatus.insert(QStringLiteral("outputsPreserved"), preserved);
+            m_reloadStatus.insert(QStringLiteral("state"), ready && preserved ? QStringLiteral("ready") : QStringLiteral("error"));
+            if (!ready || !preserved) {
+                m_reloadStatus.insert(QStringLiteral("error"), preserved
+                    ? QStringLiteral("Scene did not become ready; check the KWin journal.")
+                    : QStringLiteral("Output layout changed during reload."));
+                showCursor();
+            }
+            poll->stop();
+            poll->deleteLater();
+        });
+        poll->start();
+    });
+    return reloadStatus();
+}
+
 BreezyDesktopEffect::BreezyDesktopEffect()
 {
     const QByteArray sessionClass = qgetenv("XDG_SESSION_CLASS").toLower();
@@ -158,7 +266,7 @@ BreezyDesktopEffect::BreezyDesktopEffect()
         [this]() { this->moveCursorToFocusedDisplay(); }
     );
 
-    connect(effects, &EffectsHandler::cursorShapeChanged, this, &BreezyDesktopEffect::updateCursorImage);
+    connect(effects, &EffectsHandler::cursorShapeChanged, this, &BreezyDesktopEffect::updateCursorImage, Qt::UniqueConnection);
     updateCursorImage();
     reconfigure(ReconfigureAll);
 
@@ -338,7 +446,7 @@ void BreezyDesktopEffect::activate()
 
     if (!isRunning()) setRunning(true);
 
-    connect(effects, &EffectsHandler::cursorShapeChanged, this, &BreezyDesktopEffect::updateCursorImage);
+    connect(effects, &EffectsHandler::cursorShapeChanged, this, &BreezyDesktopEffect::updateCursorImage, Qt::UniqueConnection);
     if (m_cursorUpdateTimer) {
         m_cursorUpdateTimer->start();
     }

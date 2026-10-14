@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick3D
+import "PosePrediction.js" as PosePrediction
 
 Item {
     id: cameraController
@@ -32,23 +33,10 @@ Item {
     property real clipFar: 10000.0
 
     function ratesOfChange(orientations) {
+        if (!orientations || orientations.length < 2) return null;
         const e0 = orientations[0].toEulerAngles();
         const e1 = orientations[1].toEulerAngles();
-        const dt = effect.poseTimeElapsedMs;
-        const yawDegrees = (e0.y - e1.y) / dt;
-        const pitchDegrees = (e0.x - e1.x) / dt;
-        const rollDegrees = (e0.z - e1.z) / dt;
-
-        return {
-            eulerEnd: e0,
-            eulerStart: e1,
-            yawDegrees: yawDegrees,
-            yaw: displays.degreeToRadian(yawDegrees),
-            pitchDegrees: pitchDegrees,
-            pitch: displays.degreeToRadian(pitchDegrees),
-            rollDegrees: rollDegrees,
-            roll: displays.degreeToRadian(rollDegrees)
-        };
+        return PosePrediction.angularRates(e0, e1, effect.poseTimeElapsedMs);
     }
 
     function updateCamera(orientations, position, rates) {
@@ -71,12 +59,7 @@ Item {
 
     // how far to look ahead is how old the pose data is plus a constant that is either the default for this device or an override
     function lookAheadMS(poseDateMs, lookAheadConfig, override) {
-        // how stale the pose data is
-        const dataAge = Date.now() - poseDateMs;
-
-        const lookAheadConstant = lookAheadConfig[0];
-        const lookAheadMultiplier = lookAheadConfig[1];
-        return (override === -1 ? lookAheadConstant : override) + dataAge;
+        return PosePrediction.predictionMs(poseDateMs, lookAheadConfig, override, Date.now());
     }
 
     function applyLookAhead(rates, lookAheadMs) {
@@ -157,8 +140,9 @@ Item {
         running: true
         onTriggered: {
             const orientations = (effect.smoothFollowEnabled || smoothFollowDisabling) ? effect.smoothFollowOrigin : effect.poseOrientations;
-            if (orientations && orientations.length > 0) {
+            if (orientations && orientations.length >= 2) {
                 const rates = ratesOfChange(orientations);
+                if (!rates) return;
                 updateCamera(orientations, effect.posePosition, rates);
                 applyRollingShutterShear(rates);
             }

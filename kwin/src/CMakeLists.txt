@@ -64,6 +64,7 @@ target_link_libraries(breezy_desktop
     KWin::kwin
 
     xr_driver_ipc
+    ${CMAKE_DL_LIBS}
 )
 
 

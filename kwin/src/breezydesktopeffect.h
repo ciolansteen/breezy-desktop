@@ -142,6 +142,8 @@ namespace KWin
         bool removeVirtualDisplay(const QString &id);
         void moveCursorToFocusedDisplay();
         bool curvedDisplaySupported() const;
+        QVariantMap reloadScene();
+        QVariantMap reloadStatus() const;
 
     Q_SIGNALS:
         void lookAheadOverrideChanged();
@@ -215,6 +217,7 @@ namespace KWin
         QTimer *m_watchdogTimer = nullptr;
         std::atomic<bool> m_poseUpdateInProgress{false};
         bool m_sessionClassBlocked = false;
+        QVariantMap m_reloadStatus{{QStringLiteral("state"), QStringLiteral("idle")}};
         qreal m_focusedDisplayDistance = 0.85;
         qreal m_allDisplaysDistance = 1.05;
         qreal m_displaySpacing = 0.0;

@@ -1,2 +1,5 @@
-add_test (NAME KWinEffectSupport COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tools/isSupported.sh)
-set_property (TEST KWinEffectSupport PROPERTY PASS_REGULAR_EXPRESSION "true")
+option(BREEZY_BUILD_TESTS "Build isolated tests (requires Python/PySide6, bubblewrap, dbus-run-session, Node and Qt QML tools)" OFF)
+if(BREEZY_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

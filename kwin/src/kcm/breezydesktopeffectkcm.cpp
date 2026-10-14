@@ -32,6 +32,8 @@
 #include <QDBusReply>
 #include <QDBusVariant>
 #include <QDBusArgument>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
 #include <QVariant>
 #include <QVariantList>
 #include <QHBoxLayout>
@@ -241,6 +243,19 @@ BreezyDesktopEffectConfig::BreezyDesktopEffectConfig(QObject *parent, const KPlu
 
     // One-time check if the KWin effect backend is actually loaded. If not, disable UI early.
     checkEffectLoaded();
+    connect(ui.buttonReloadScene, &QPushButton::clicked, this, &BreezyDesktopEffectConfig::requestSceneReload);
+    m_reloadPollTimer.setInterval(100);
+    connect(&m_reloadPollTimer, &QTimer::timeout, this, [this]() {
+        if (m_reloadElapsed.elapsed() > 6000) {
+            m_reloadPollTimer.stop();
+            m_reloadingScene = false;
+            ui.buttonReloadScene->setEnabled(true);
+            ui.labelReloadStatus->setText(tr("Reload result timed out; no success was confirmed."));
+            return;
+        }
+        refreshSceneReloadStatus();
+    });
+    refreshSceneReloadStatus();
 
     // Asynchronously check GitHub for a newer release.
     checkForUpdates();
@@ -597,6 +612,94 @@ void BreezyDesktopEffectConfig::updateUiFromDefaultConfig()
 
 void BreezyDesktopEffectConfig::updateUnmanagedState()
 {
+}
+
+void BreezyDesktopEffectConfig::requestSceneReload()
+{
+    if (m_reloadingScene) return;
+    m_reloadingScene = true;
+    m_reloadElapsed.start();
+    ui.buttonReloadScene->setEnabled(false);
+    ui.labelReloadStatus->setText(tr("Reloading XR scene..."));
+    QDBusInterface iface(QStringLiteral("org.kde.KWin"), QStringLiteral("/com/xronlinux/BreezyDesktop"),
+                         QStringLiteral("com.xronlinux.BreezyDesktop"), QDBusConnection::sessionBus());
+    iface.setTimeout(1500);
+    auto *watcher = new QDBusPendingCallWatcher(iface.asyncCall(QStringLiteral("ReloadScene")), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, watcher]() {
+        QDBusPendingReply<QVariantMap> reply = *watcher;
+        watcher->deleteLater();
+        if (reply.isError()) {
+            m_reloadingScene = false;
+            ui.buttonReloadScene->setEnabled(true);
+            ui.labelReloadStatus->setText(tr("Reload failed: %1").arg(reply.error().message()));
+            return;
+        }
+        const auto status = reply.value();
+        if (status.value(QStringLiteral("state")).toString() != QStringLiteral("pending")) {
+            m_reloadingScene = false;
+            ui.buttonReloadScene->setEnabled(true);
+            ui.labelReloadStatus->setText(tr("Reload refused: %1").arg(status.value(QStringLiteral("error")).toString()));
+            return;
+        }
+        m_reloadPollTimer.start();
+    });
+}
+
+void BreezyDesktopEffectConfig::refreshSceneReloadStatus()
+{
+    if (m_reloadStatusRequestPending) return;
+    m_reloadStatusRequestPending = true;
+    QDBusInterface iface(QStringLiteral("org.kde.KWin"), QStringLiteral("/com/xronlinux/BreezyDesktop"),
+                         QStringLiteral("com.xronlinux.BreezyDesktop"), QDBusConnection::sessionBus());
+    iface.setTimeout(1500);
+    auto *watcher = new QDBusPendingCallWatcher(iface.asyncCall(QStringLiteral("ReloadStatus")), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this, watcher]() {
+        QDBusPendingReply<QVariantMap> reply = *watcher;
+        watcher->deleteLater();
+        m_reloadStatusRequestPending = false;
+        if (reply.isError()) {
+            m_reloadPollTimer.stop();
+            m_reloadingScene = false;
+            ui.buttonReloadScene->setEnabled(false);
+            ui.labelReloadStatus->setText(reply.error().type() == QDBusError::UnknownMethod
+                ? tr("The running plugin predates scene reload. Log out and back in after installing the update.")
+                : tr("Cannot query the running effect: %1").arg(reply.error().message()));
+            return;
+        }
+        const auto status = reply.value();
+        const auto state = status.value(QStringLiteral("state")).toString();
+        if (state == QStringLiteral("pending")) {
+            ui.buttonReloadScene->setEnabled(false);
+            if (!m_reloadingScene) {
+                m_reloadingScene = true;
+                m_reloadElapsed.start();
+                m_reloadPollTimer.start();
+            }
+            return;
+        }
+        QString message;
+        if (m_reloadingScene) {
+            const bool verified = (state == QStringLiteral("ready") || state == QStringLiteral("inactive"))
+                && status.value(QStringLiteral("outputsPreserved")).toBool();
+            message = verified ? tr("Scene reloaded; output layout preserved.")
+                               : tr("Reload failed: %1").arg(status.value(QStringLiteral("error")).toString());
+            if (verified && state == QStringLiteral("inactive")) message += tr(" The effect remains inactive.");
+        }
+        if (!status.value(QStringLiteral("binaryCurrent")).toBool()) {
+            if (!message.isEmpty()) message += QLatin1Char(' ');
+            message += tr("The loaded C++ plugin differs from the installed file or could not be verified. Scene reload cannot replace it; log out and back in for C++ updates.");
+        } else if (message.isEmpty()) {
+            message = tr("Running plugin matches the installed binary.");
+        }
+        ui.labelReloadStatus->setToolTip(tr("Plugin: %1\nLoaded Build ID: %2\nInstalled Build ID: %3")
+            .arg(status.value(QStringLiteral("pluginPath")).toString(),
+                 status.value(QStringLiteral("loadedBuildId")).toString(),
+                 status.value(QStringLiteral("installedBuildId")).toString()));
+        ui.labelReloadStatus->setText(message);
+        m_reloadPollTimer.stop();
+        m_reloadingScene = false;
+        ui.buttonReloadScene->setEnabled(true);
+    });
 }
 
 void BreezyDesktopEffectConfig::checkEffectLoaded() {

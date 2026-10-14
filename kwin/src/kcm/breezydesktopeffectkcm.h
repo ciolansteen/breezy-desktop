@@ -6,6 +6,7 @@
 
 #include <QNetworkAccessManager>
 #include <QTimer>
+#include <QElapsedTimer>
 #include <QVariant>
 #include <QVariantList>
 #include <QString>
@@ -68,6 +69,8 @@ private:
     void pollDriverState();
     void refreshLicenseUi(const QJsonObject &rootObj);
     void checkEffectLoaded();
+    void requestSceneReload();
+    void refreshSceneReloadStatus();
     void checkForUpdates();
     void showStatus(QLabel *label, bool success, const QString &message);
     void setRequestInProgress(std::initializer_list<QObject*> widgets, bool inProgress);
@@ -97,6 +100,10 @@ private:
     bool m_connectedDevicePoseHasPosition = false;
     QTimer m_statePollTimer; // periodic driver state polling
     QTimer m_virtualDisplayPollTimer; // periodic virtual display list polling
+    QTimer m_reloadPollTimer;
+    QElapsedTimer m_reloadElapsed;
+    bool m_reloadingScene = false;
+    bool m_reloadStatusRequestPending = false;
     bool m_licenseLoading = false;
     bool m_curvedDisplaySupported = true;
     bool m_connectedDevicePossibleImuMisalignment = false;

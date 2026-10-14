@@ -78,6 +78,23 @@
       </widget>
      </item>
      <item>
+      <layout class="QHBoxLayout" name="layoutSceneReload">
+       <item>
+        <widget class="QPushButton" name="buttonReloadScene">
+         <property name="text"><string>Reload XR scene</string></property>
+         <property name="enabled"><bool>false</bool></property>
+         <property name="toolTip"><string>Reload the QML scene and saved settings without restarting KWin or removing virtual displays. Apply edits first. This does not replace the C++ plugin.</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="labelReloadStatus">
+         <property name="text"><string>Checking running plugin...</string></property>
+         <property name="wordWrap"><bool>true</bool></property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+     <item>
         <widget class="QTabWidget" name="tabWidget">
      <property name="tabPosition">
       <enum>QTabWidget::North</enum>
@@ -604,6 +621,9 @@
         </item>
         <item row="7" column="1">
           <widget class="LabeledSlider" name="kcfg_LookAheadOverride">
+          <property name="toolTip">
+            <string>Override the look-ahead base in milliseconds. The device's prediction cap still applies, including to explicit overrides.</string>
+          </property>
           <property name="tickPosition">
             <enum>QSlider::NoTicks</enum>
           </property>
