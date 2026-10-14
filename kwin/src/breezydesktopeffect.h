@@ -188,7 +188,7 @@ namespace KWin
         void invalidateEffectOnScreenGeometryCache();
         bool updateEffectOnScreenGeometryCache();
         QString virtualDisplayProfilePath() const;
-        bool saveVirtualDisplayProfile();
+        bool saveVirtualDisplayProfile(bool allowEmpty = false);
         bool restoreVirtualDisplaysFromProfile();
         bool createVirtualDisplayFromProfile(const QString &id, const QSize &size,
                                              const QPoint &pos, qreal scale, int transform);
@@ -236,6 +236,7 @@ namespace KWin
         int m_nextVirtualDisplaySerial = 1;
         bool m_removeVirtualDisplaysOnDisable = true;
         bool m_virtualDisplayProfileReadable = true;
+        QString m_virtualDisplayRestoreError;
         QString m_desktopSourceOutput;
         bool m_mirrorPhysicalDisplays = false;
         bool m_curvedDisplay = false;

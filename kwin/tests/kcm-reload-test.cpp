@@ -31,13 +31,17 @@ int main(int argc, char **argv)
         if (argc < 3) return 2;
         const auto method = QString::fromLocal8Bit(argv[2]);
         QVariantList args;
-        for (int i = 3; i < argc; ++i) args << QString::fromLocal8Bit(argv[i]).toInt();
+        for (int i = 3; i < argc; ++i) {
+            const auto argument = QString::fromLocal8Bit(argv[i]);
+            args << (method == QStringLiteral("RemoveVirtualDisplay") ? QVariant(argument) : QVariant(argument.toInt()));
+        }
         const auto message = iface.callWithArgumentList(QDBus::Block, method, args);
         if (message.type() == QDBusMessage::ErrorMessage) {
             std::cerr << message.errorMessage().toStdString(); return 8;
         }
         QVariant value;
-        if (method == QStringLiteral("ListVirtualDisplays") || method == QStringLiteral("AddVirtualDisplay")) {
+        if (method == QStringLiteral("ListVirtualDisplays") || method == QStringLiteral("AddVirtualDisplay")
+            || method == QStringLiteral("RemoveVirtualDisplay")) {
             QDBusReply<QVariantList> reply(message);
             if (!reply.isValid()) return 7;
             auto rows = reply.value();

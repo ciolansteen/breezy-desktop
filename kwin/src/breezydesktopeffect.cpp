@@ -44,6 +44,9 @@
 #include <KLocalizedString>
 
 #include <algorithm>
+#include <cmath>
+#include <climits>
+#include <QSet>
 
 Q_LOGGING_CATEGORY(KWIN_XR, "kwin.xr")
 
@@ -157,6 +160,8 @@ QVariantMap BreezyDesktopEffect::reloadStatus() const
     const auto identity = binaryIdentity();
     for (auto it = identity.cbegin(); it != identity.cend(); ++it) status.insert(it.key(), it.value());
     status.insert(QStringLiteral("running"), isRunning());
+    status.insert(QStringLiteral("virtualDisplayRestoreError"), m_virtualDisplayRestoreError);
+    status.insert(QStringLiteral("virtualDisplayProfileWriteAllowed"), m_virtualDisplayProfileReadable);
     return status;
 }
 
@@ -486,8 +491,8 @@ void BreezyDesktopEffect::deactivate()
     }
     showCursor();
 
-    if (m_removeVirtualDisplaysOnDisable) {
-        saveVirtualDisplayProfile();
+    const bool profileSaved = saveVirtualDisplayProfile();
+    if (m_removeVirtualDisplaysOnDisable && profileSaved) {
         for (auto it = m_virtualDisplays.begin(); it != m_virtualDisplays.end(); ++it) {
             if (it->output) {
                 KWin::kwinApp()->outputBackend()->removeVirtualOutput(it->output);
@@ -527,10 +532,39 @@ void BreezyDesktopEffect::disableDriver()
 
 void BreezyDesktopEffect::addVirtualDisplay(QSize size)
 {
+    if (!m_virtualDisplayProfileReadable) return;
+    if (!isRunning() && m_virtualDisplays.isEmpty()) {
+        QFile profile(virtualDisplayProfilePath());
+        if (profile.exists()) {
+            QJsonParseError error;
+            QJsonDocument doc;
+            if (profile.open(QIODevice::ReadOnly) && profile.size() <= 1024 * 1024)
+                doc = QJsonDocument::fromJson(profile.readAll(), &error);
+            const auto root = doc.object();
+            if (error.error != QJsonParseError::NoError || !doc.isObject()
+                || root.value(QStringLiteral("version")).toDouble() != 1.0
+                || !root.value(QStringLiteral("entries")).isArray()
+                || !root.value(QStringLiteral("entries")).toArray().isEmpty()) {
+                m_virtualDisplayRestoreError = QStringLiteral("Activate XR to restore saved displays before adding another.");
+                return;
+            }
+        }
+    }
+    if (m_nextVirtualDisplaySerial >= INT_MAX) {
+        qCWarning(KWIN_XR) << "Breezy - virtual display identifiers exhausted";
+        return;
+    }
     const int serial = m_nextVirtualDisplaySerial++;
     const QString name = QStringLiteral("BreezyDesktop_%1").arg(serial);
-    createVirtualDisplayFromProfile(name, size, QPoint(), 1.0, 0);
-    saveVirtualDisplayProfile();
+    if (!createVirtualDisplayFromProfile(name, size, QPoint(), 1.0, 0)) {
+        m_nextVirtualDisplaySerial = serial;
+        return;
+    }
+    if (!saveVirtualDisplayProfile()) {
+        auto *output = m_virtualDisplays.take(name).output;
+        if (output) KWin::kwinApp()->outputBackend()->removeVirtualOutput(output);
+        m_nextVirtualDisplaySerial = serial;
+    }
 }
 
 QVariantList BreezyDesktopEffect::listVirtualDisplays() const {
@@ -543,10 +577,22 @@ QVariantList BreezyDesktopEffect::listVirtualDisplays() const {
         entry.insert(QStringLiteral("id"), info.id);
         entry.insert(QStringLiteral("width"), info.size.width());
         entry.insert(QStringLiteral("height"), info.size.height());
-        entry.insert(QStringLiteral("x"), info.pos.x());
-        entry.insert(QStringLiteral("y"), info.pos.y());
-        entry.insert(QStringLiteral("scale"), info.scale);
-        entry.insert(QStringLiteral("transform"), info.transform);
+        QPoint pos = info.pos;
+        qreal scale = info.scale;
+        int transform = info.transform;
+#if defined(KWIN_VERSION_ENCODED) && KWIN_VERSION_ENCODED >= 60590
+        if (auto *workspace = KWin::Workspace::self()) {
+            if (auto *logical = workspace->findOutput(info.output)) {
+                pos = logical->geometry().topLeft();
+                scale = logical->scale();
+                transform = static_cast<int>(logical->transform().kind());
+            }
+        }
+#endif
+        entry.insert(QStringLiteral("x"), pos.x());
+        entry.insert(QStringLiteral("y"), pos.y());
+        entry.insert(QStringLiteral("scale"), scale);
+        entry.insert(QStringLiteral("transform"), transform);
         list.push_back(entry);
     }
     return list;
@@ -555,12 +601,15 @@ QVariantList BreezyDesktopEffect::listVirtualDisplays() const {
 bool BreezyDesktopEffect::removeVirtualDisplay(const QString &id) {
     auto it = m_virtualDisplays.find(id);
     if (it != m_virtualDisplays.end()) {
-        VirtualOutputHandle *output = it->output;
-        if (output) {
-            KWin::kwinApp()->outputBackend()->removeVirtualOutput(output);
-        }
+        const VirtualOutputInfo info = it.value();
         m_virtualDisplays.erase(it);
-        saveVirtualDisplayProfile();
+        if (!saveVirtualDisplayProfile(true)) {
+            m_virtualDisplays.insert(id, info);
+            return false;
+        }
+        if (info.output) {
+            KWin::kwinApp()->outputBackend()->removeVirtualOutput(info.output);
+        }
         return true;
     }
     return false;
@@ -1133,25 +1182,17 @@ bool BreezyDesktopEffect::createVirtualDisplayFromProfile(const QString &id, con
     m_virtualDisplays.insert(info.id, info);
     updateNextVirtualDisplaySerial(id);
 
-#if defined(KWIN_VERSION_ENCODED) && KWIN_VERSION_ENCODED >= 60590
-    if (auto *workspace = KWin::Workspace::self()) {
-        KWin::OutputConfiguration config;
-        auto changes = config.changeSet(output);
-        changes->pos = pos;
-        changes->scale = safeScale;
-        changes->transform = KWin::OutputTransform(static_cast<KWin::OutputTransform::Kind>(std::clamp(transform, 0, 7)));
-        workspace->applyOutputConfiguration(config);
-    }
-#endif
     return true;
 }
 
-bool BreezyDesktopEffect::saveVirtualDisplayProfile()
+bool BreezyDesktopEffect::saveVirtualDisplayProfile(bool allowEmpty)
 {
     if (!m_virtualDisplayProfileReadable) {
         qCCritical(KWIN_XR) << "Breezy - refusing to overwrite unreadable virtual display profile";
         return false;
     }
+    // A second disable/destructor must not erase the last saved topology.
+    if (m_virtualDisplays.isEmpty() && !allowEmpty) return true;
     QJsonArray entries;
     QStringList ids = m_virtualDisplays.keys();
     ids.sort();
@@ -1194,7 +1235,11 @@ bool BreezyDesktopEffect::saveVirtualDisplayProfile()
         qCCritical(KWIN_XR) << "Breezy - failed to open virtual display profile" << path << file.errorString();
         return false;
     }
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    const QByteArray data = QJsonDocument(root).toJson(QJsonDocument::Indented);
+    if (file.write(data) != data.size()) {
+        file.cancelWriting();
+        return false;
+    }
     if (!file.commit()) {
         qCCritical(KWIN_XR) << "Breezy - failed to commit virtual display profile" << path << file.errorString();
         return false;
@@ -1204,45 +1249,110 @@ bool BreezyDesktopEffect::saveVirtualDisplayProfile()
 
 bool BreezyDesktopEffect::restoreVirtualDisplaysFromProfile()
 {
-    if (!m_virtualDisplays.isEmpty()) {
+    if (!m_virtualDisplays.isEmpty()) return true;
+    auto fail = [this](const QString &error) {
+        m_virtualDisplayProfileReadable = false;
+        m_virtualDisplayRestoreError = error;
+        qCWarning(KWIN_XR) << "Breezy - virtual display restoration failed:" << error;
         return false;
-    }
+    };
     QFile file(virtualDisplayProfilePath());
     if (!file.exists()) {
         m_virtualDisplayProfileReadable = true;
+        m_virtualDisplayRestoreError.clear();
         return false;
     }
-    if (!file.open(QIODevice::ReadOnly)) {
-        m_virtualDisplayProfileReadable = false;
-        return false;
-    }
+    if (!file.open(QIODevice::ReadOnly) || file.size() > 1024 * 1024)
+        return fail(QStringLiteral("Virtual display profile is unreadable or too large."));
     QJsonParseError error;
     const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &error);
-    if (error.error != QJsonParseError::NoError || !doc.isObject()) {
-        m_virtualDisplayProfileReadable = false;
-        qCCritical(KWIN_XR) << "Breezy - ignoring corrupt virtual display profile" << file.fileName() << error.errorString();
+    if (error.error != QJsonParseError::NoError || !doc.isObject())
+        return fail(QStringLiteral("Virtual display profile is not valid JSON."));
+    const auto root = doc.object();
+    if (!root.value(QStringLiteral("version")).isDouble()
+        || root.value(QStringLiteral("version")).toDouble() != 1.0
+        || !root.value(QStringLiteral("entries")).isArray())
+        return fail(QStringLiteral("Unsupported virtual display profile format."));
+    const auto entries = root.value(QStringLiteral("entries")).toArray();
+    if (entries.size() > 64) return fail(QStringLiteral("Too many saved virtual displays."));
+    QList<VirtualOutputInfo> parsed;
+    QSet<QString> ids;
+    auto integer = [](const QJsonObject &entry, const QString &key, double min, double max) {
+        const auto value = entry.value(key);
+        const double n = value.toDouble();
+        return value.isDouble() && std::isfinite(n) && std::floor(n) == n && n >= min && n <= max;
+    };
+    for (const auto &value : entries) {
+        if (!value.isObject()) return fail(QStringLiteral("Invalid virtual display entry."));
+        const auto entry = value.toObject();
+        const QString id = entry.value(QStringLiteral("id")).toString();
+        const QString prefix = QStringLiteral("BreezyDesktop_");
+        bool ok = false;
+        const int serial = id.mid(prefix.size()).toInt(&ok);
+        if (!id.startsWith(prefix) || !ok || serial < 1 || serial >= INT_MAX
+            || id != prefix + QString::number(serial) || ids.contains(id)
+            || !integer(entry, QStringLiteral("width"), 1, 16384)
+            || !integer(entry, QStringLiteral("height"), 1, 16384)
+            || !integer(entry, QStringLiteral("x"), -1048576, 1048576)
+            || !integer(entry, QStringLiteral("y"), -1048576, 1048576)
+            || !integer(entry, QStringLiteral("transform"), 0, 7))
+            return fail(QStringLiteral("Invalid or duplicate saved virtual display."));
+        const auto scaleValue = entry.value(QStringLiteral("scale"));
+        const double scale = scaleValue.toDouble();
+        if (!scaleValue.isDouble() || !std::isfinite(scale) || scale < .25 || scale > 8.0)
+            return fail(QStringLiteral("Invalid saved virtual display scale."));
+        VirtualOutputInfo info;
+        info.id = id;
+        info.size = QSize(entry.value(QStringLiteral("width")).toInt(), entry.value(QStringLiteral("height")).toInt());
+        info.pos = QPoint(entry.value(QStringLiteral("x")).toInt(), entry.value(QStringLiteral("y")).toInt());
+        info.scale = scale;
+        info.transform = entry.value(QStringLiteral("transform")).toInt();
+        parsed.append(info);
+        ids.insert(id);
+    }
+    if (parsed.isEmpty()) {
+        m_virtualDisplayProfileReadable = true;
+        m_virtualDisplayRestoreError.clear();
         return false;
     }
-    const QJsonObject root = doc.object();
-    if (root.value(QStringLiteral("version")).toInt() != 1 || !root.value(QStringLiteral("entries")).isArray()) {
-        m_virtualDisplayProfileReadable = false;
-        return false;
+#if defined(KWIN_VERSION_ENCODED) && KWIN_VERSION_ENCODED >= 60590
+    auto *workspace = KWin::Workspace::self();
+    if (!workspace) return fail(QStringLiteral("KWin workspace is unavailable."));
+    QStringList created;
+    const int previousSerial = m_nextVirtualDisplaySerial;
+    auto rollback = [this, &created, previousSerial]() {
+        for (const auto &id : created) {
+            auto output = m_virtualDisplays.take(id).output;
+            if (output) KWin::kwinApp()->outputBackend()->removeVirtualOutput(output);
+        }
+        m_nextVirtualDisplaySerial = previousSerial;
+    };
+    for (const auto &info : parsed) {
+        if (!createVirtualDisplayFromProfile(info.id, info.size, info.pos, info.scale, info.transform)) {
+            rollback();
+            return fail(QStringLiteral("Could not create every saved virtual display."));
+        }
+        created.append(info.id);
+    }
+    KWin::OutputConfiguration config;
+    for (const auto &info : parsed) {
+        auto changes = config.changeSet(m_virtualDisplays.value(info.id).output);
+        changes->pos = info.pos;
+        changes->scale = info.scale;
+        changes->scaleSetting = info.scale;
+        changes->transform = KWin::OutputTransform(static_cast<KWin::OutputTransform::Kind>(info.transform));
+        changes->manualTransform = changes->transform;
+    }
+    if (workspace->applyOutputConfiguration(config) != KWin::OutputConfigurationError::None) {
+        rollback();
+        return fail(QStringLiteral("KWin rejected the saved virtual display layout."));
     }
     m_virtualDisplayProfileReadable = true;
-    bool restored = false;
-    const QJsonArray entries = root.value(QStringLiteral("entries")).toArray();
-    for (const QJsonValue &value : entries) {
-        const QJsonObject entry = value.toObject();
-        const QString id = entry.value(QStringLiteral("id")).toString();
-        const QSize size(entry.value(QStringLiteral("width")).toInt(), entry.value(QStringLiteral("height")).toInt());
-        const QPoint pos(entry.value(QStringLiteral("x")).toInt(), entry.value(QStringLiteral("y")).toInt());
-        const qreal scale = entry.value(QStringLiteral("scale")).toDouble(1.0);
-        const int transform = entry.value(QStringLiteral("transform")).toInt(0);
-        if (id.startsWith(QStringLiteral("BreezyDesktop_")) && createVirtualDisplayFromProfile(id, size, pos, scale, transform)) {
-            restored = true;
-        }
-    }
-    return restored;
+    m_virtualDisplayRestoreError.clear();
+    return true;
+#else
+    return fail(QStringLiteral("Restoring virtual display layout requires a newer KWin."));
+#endif
 }
 
 void BreezyDesktopEffect::invalidateEffectOnScreenGeometryCache()

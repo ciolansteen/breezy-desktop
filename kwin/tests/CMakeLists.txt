@@ -13,6 +13,9 @@ foreach(version 1 2)
 endforeach()
 add_test(NAME PluginBuildId COMMAND buildid-test $<TARGET_FILE:buildid-fixture1> $<TARGET_FILE:buildid-fixture2>)
 
+add_library(restore-failure-fixture MODULE restore-failure-fixture.cpp)
+target_link_libraries(restore-failure-fixture PRIVATE ${CMAKE_DL_LIBS})
+
 add_executable(kcm-reload-test kcm-reload-test.cpp)
 target_link_libraries(kcm-reload-test PRIVATE Qt6::Widgets Qt6::DBus KF6::CoreAddons KF6::KCMUtils)
 add_test(NAME SceneReload COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/nested-reload-test.py ${CMAKE_BINARY_DIR} ${CMAKE_SOURCE_DIR}/..)
