@@ -11,6 +11,7 @@
 #include <QVariant>
 #include <QVariantList>
 #include <QHash>
+#include <QPoint>
 #include <QRect>
 #include <atomic>
 class QTimer;
@@ -186,6 +187,12 @@ namespace KWin
         void evaluateCursorOnScreenState(const QPointF &prevPos, const QPointF &newPos);
         void invalidateEffectOnScreenGeometryCache();
         bool updateEffectOnScreenGeometryCache();
+        QString virtualDisplayProfilePath() const;
+        bool saveVirtualDisplayProfile();
+        bool restoreVirtualDisplaysFromProfile();
+        bool createVirtualDisplayFromProfile(const QString &id, const QSize &size,
+                                             const QPoint &pos, qreal scale, int transform);
+        void updateNextVirtualDisplaySerial(const QString &id);
 
         QString m_cursorImageSource;
         QSize m_cursorImageSize;
@@ -226,7 +233,9 @@ namespace KWin
         qreal m_displayVerticalOffset = 0.0;
         int m_displayWrappingScheme = 0; // 0=auto,1=horizontal,2=vertical,3=flat
         int m_antialiasingQuality = 3; // 0=None, 1=Medium, 2=High, 3=VeryHigh
+        int m_nextVirtualDisplaySerial = 1;
         bool m_removeVirtualDisplaysOnDisable = true;
+        bool m_virtualDisplayProfileReadable = true;
         QString m_desktopSourceOutput;
         bool m_mirrorPhysicalDisplays = false;
         bool m_curvedDisplay = false;
@@ -244,6 +253,9 @@ namespace KWin
             VirtualOutputHandle *output = nullptr;
             QString id;
             QSize size;
+            QPoint pos;
+            qreal scale = 1.0;
+            int transform = 0;
         };
         QHash<QString, VirtualOutputInfo> m_virtualDisplays;
     };

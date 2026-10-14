@@ -10,6 +10,7 @@
 #include "effect/effect.h"
 #include "effect/effecthandler.h"
 #include "opengl/glutils.h"
+#include "workspace.h"
 #include "xrdriveripc.h"
 #include "pluginbuildid.h"
 #include <QQmlComponent>
@@ -19,6 +20,7 @@
 
 #include <kwin/main.h>
 #include <core/outputbackend.h>
+#include <core/outputconfiguration.h>
 
 #include <functional>
 #include <QAction>
@@ -32,6 +34,11 @@
 #include <QTimer>
 #include <QDBusConnection>
 #include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QSaveFile>
+#include <QStandardPaths>
 
 #include <KGlobalAccel>
 #include <KLocalizedString>
@@ -444,7 +451,10 @@ void BreezyDesktopEffect::activate()
     }
     qCCritical(KWIN_XR) << "\t\t\tBreezy - activate";
 
-    if (!isRunning()) setRunning(true);
+    if (!isRunning()) {
+        restoreVirtualDisplaysFromProfile();
+        setRunning(true);
+    }
 
     connect(effects, &EffectsHandler::cursorShapeChanged, this, &BreezyDesktopEffect::updateCursorImage, Qt::UniqueConnection);
     if (m_cursorUpdateTimer) {
@@ -477,6 +487,7 @@ void BreezyDesktopEffect::deactivate()
     showCursor();
 
     if (m_removeVirtualDisplaysOnDisable) {
+        saveVirtualDisplayProfile();
         for (auto it = m_virtualDisplays.begin(); it != m_virtualDisplays.end(); ++it) {
             if (it->output) {
                 KWin::kwinApp()->outputBackend()->removeVirtualOutput(it->output);
@@ -516,22 +527,10 @@ void BreezyDesktopEffect::disableDriver()
 
 void BreezyDesktopEffect::addVirtualDisplay(QSize size)
 {
-    static int virtualDisplayCount = 0;
-    ++virtualDisplayCount;
-    QString name = QStringLiteral("BreezyDesktop_%1").arg(virtualDisplayCount);
-    #if defined(KWIN_VERSION_ENCODED) && KWIN_VERSION_ENCODED >= 60290
-        QString description = QStringLiteral("Breezy Display %1x%2 (%3)").arg(size.width()).arg(size.height()).arg(virtualDisplayCount);
-        auto output = KWin::kwinApp()->outputBackend()->createVirtualOutput(name, description, size, 1.0);
-    #else
-        auto output = KWin::kwinApp()->outputBackend()->createVirtualOutput(name, size, 1.0);
-    #endif
-    if (output) {
-        VirtualOutputInfo info;
-        info.output = output;
-        info.id = name;
-        info.size = size;
-        m_virtualDisplays.insert(info.id, info);
-    }
+    const int serial = m_nextVirtualDisplaySerial++;
+    const QString name = QStringLiteral("BreezyDesktop_%1").arg(serial);
+    createVirtualDisplayFromProfile(name, size, QPoint(), 1.0, 0);
+    saveVirtualDisplayProfile();
 }
 
 QVariantList BreezyDesktopEffect::listVirtualDisplays() const {
@@ -544,6 +543,10 @@ QVariantList BreezyDesktopEffect::listVirtualDisplays() const {
         entry.insert(QStringLiteral("id"), info.id);
         entry.insert(QStringLiteral("width"), info.size.width());
         entry.insert(QStringLiteral("height"), info.size.height());
+        entry.insert(QStringLiteral("x"), info.pos.x());
+        entry.insert(QStringLiteral("y"), info.pos.y());
+        entry.insert(QStringLiteral("scale"), info.scale);
+        entry.insert(QStringLiteral("transform"), info.transform);
         list.push_back(entry);
     }
     return list;
@@ -557,6 +560,7 @@ bool BreezyDesktopEffect::removeVirtualDisplay(const QString &id) {
             KWin::kwinApp()->outputBackend()->removeVirtualOutput(output);
         }
         m_virtualDisplays.erase(it);
+        saveVirtualDisplayProfile();
         return true;
     }
     return false;
@@ -1080,6 +1084,165 @@ void BreezyDesktopEffect::evaluateCursorOnScreenState(const QPointF &prevPos, co
     } else if (m_cursorHidden && (!m_enabled || m_poseResetState || !onScreen)) {
         showCursor();
     }
+}
+
+QString BreezyDesktopEffect::virtualDisplayProfilePath() const
+{
+    const QString root = QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation);
+    return QDir(root).filePath(QStringLiteral("breezy_desktop/virtual-displays.json"));
+}
+
+void BreezyDesktopEffect::updateNextVirtualDisplaySerial(const QString &id)
+{
+    static const QString prefix = QStringLiteral("BreezyDesktop_");
+    if (!id.startsWith(prefix)) {
+        return;
+    }
+    bool ok = false;
+    const int serial = id.mid(prefix.size()).toInt(&ok);
+    if (ok && serial >= m_nextVirtualDisplaySerial) {
+        m_nextVirtualDisplaySerial = serial + 1;
+    }
+}
+
+bool BreezyDesktopEffect::createVirtualDisplayFromProfile(const QString &id, const QSize &size,
+                                                          const QPoint &pos, qreal scale, int transform)
+{
+    if (!size.isValid() || m_virtualDisplays.contains(id)) {
+        updateNextVirtualDisplaySerial(id);
+        return false;
+    }
+    const qreal safeScale = scale > 0.0 ? scale : 1.0;
+#if defined(KWIN_VERSION_ENCODED) && KWIN_VERSION_ENCODED >= 60290
+    const QString description = QStringLiteral("Breezy Display %1x%2 (%3)").arg(size.width()).arg(size.height()).arg(id);
+    auto output = KWin::kwinApp()->outputBackend()->createVirtualOutput(id, description, size, safeScale);
+#else
+    auto output = KWin::kwinApp()->outputBackend()->createVirtualOutput(id, size, safeScale);
+#endif
+    if (!output) {
+        return false;
+    }
+
+    VirtualOutputInfo info;
+    info.output = output;
+    info.id = id;
+    info.size = size;
+    info.pos = pos;
+    info.scale = safeScale;
+    info.transform = transform;
+    m_virtualDisplays.insert(info.id, info);
+    updateNextVirtualDisplaySerial(id);
+
+#if defined(KWIN_VERSION_ENCODED) && KWIN_VERSION_ENCODED >= 60590
+    if (auto *workspace = KWin::Workspace::self()) {
+        KWin::OutputConfiguration config;
+        auto changes = config.changeSet(output);
+        changes->pos = pos;
+        changes->scale = safeScale;
+        changes->transform = KWin::OutputTransform(static_cast<KWin::OutputTransform::Kind>(std::clamp(transform, 0, 7)));
+        workspace->applyOutputConfiguration(config);
+    }
+#endif
+    return true;
+}
+
+bool BreezyDesktopEffect::saveVirtualDisplayProfile()
+{
+    if (!m_virtualDisplayProfileReadable) {
+        qCCritical(KWIN_XR) << "Breezy - refusing to overwrite unreadable virtual display profile";
+        return false;
+    }
+    QJsonArray entries;
+    QStringList ids = m_virtualDisplays.keys();
+    ids.sort();
+    for (const QString &id : ids) {
+        auto it = m_virtualDisplays.constFind(id);
+        if (it == m_virtualDisplays.constEnd() || !it->output) {
+            continue;
+        }
+        const auto &info = it.value();
+        QPoint pos = info.pos;
+        qreal scale = info.scale;
+        int transform = info.transform;
+#if defined(KWIN_VERSION_ENCODED) && KWIN_VERSION_ENCODED >= 60590
+        if (auto *workspace = KWin::Workspace::self()) {
+            if (auto *logical = workspace->findOutput(info.output)) {
+                pos = logical->geometry().topLeft();
+                scale = logical->scale();
+                transform = static_cast<int>(logical->transform().kind());
+            }
+        }
+#endif
+        QJsonObject entry;
+        entry.insert(QStringLiteral("id"), id);
+        entry.insert(QStringLiteral("width"), info.size.width());
+        entry.insert(QStringLiteral("height"), info.size.height());
+        entry.insert(QStringLiteral("x"), pos.x());
+        entry.insert(QStringLiteral("y"), pos.y());
+        entry.insert(QStringLiteral("scale"), scale);
+        entry.insert(QStringLiteral("transform"), transform);
+        entries.append(entry);
+    }
+
+    QJsonObject root;
+    root.insert(QStringLiteral("version"), 1);
+    root.insert(QStringLiteral("entries"), entries);
+    const QString path = virtualDisplayProfilePath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        qCCritical(KWIN_XR) << "Breezy - failed to open virtual display profile" << path << file.errorString();
+        return false;
+    }
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    if (!file.commit()) {
+        qCCritical(KWIN_XR) << "Breezy - failed to commit virtual display profile" << path << file.errorString();
+        return false;
+    }
+    return true;
+}
+
+bool BreezyDesktopEffect::restoreVirtualDisplaysFromProfile()
+{
+    if (!m_virtualDisplays.isEmpty()) {
+        return false;
+    }
+    QFile file(virtualDisplayProfilePath());
+    if (!file.exists()) {
+        m_virtualDisplayProfileReadable = true;
+        return false;
+    }
+    if (!file.open(QIODevice::ReadOnly)) {
+        m_virtualDisplayProfileReadable = false;
+        return false;
+    }
+    QJsonParseError error;
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !doc.isObject()) {
+        m_virtualDisplayProfileReadable = false;
+        qCCritical(KWIN_XR) << "Breezy - ignoring corrupt virtual display profile" << file.fileName() << error.errorString();
+        return false;
+    }
+    const QJsonObject root = doc.object();
+    if (root.value(QStringLiteral("version")).toInt() != 1 || !root.value(QStringLiteral("entries")).isArray()) {
+        m_virtualDisplayProfileReadable = false;
+        return false;
+    }
+    m_virtualDisplayProfileReadable = true;
+    bool restored = false;
+    const QJsonArray entries = root.value(QStringLiteral("entries")).toArray();
+    for (const QJsonValue &value : entries) {
+        const QJsonObject entry = value.toObject();
+        const QString id = entry.value(QStringLiteral("id")).toString();
+        const QSize size(entry.value(QStringLiteral("width")).toInt(), entry.value(QStringLiteral("height")).toInt());
+        const QPoint pos(entry.value(QStringLiteral("x")).toInt(), entry.value(QStringLiteral("y")).toInt());
+        const qreal scale = entry.value(QStringLiteral("scale")).toDouble(1.0);
+        const int transform = entry.value(QStringLiteral("transform")).toInt(0);
+        if (id.startsWith(QStringLiteral("BreezyDesktop_")) && createVirtualDisplayFromProfile(id, size, pos, scale, transform)) {
+            restored = true;
+        }
+    }
+    return restored;
 }
 
 void BreezyDesktopEffect::invalidateEffectOnScreenGeometryCache()

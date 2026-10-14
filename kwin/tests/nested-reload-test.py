@@ -84,8 +84,43 @@ def inside():
             for size in ((640, 480), (800, 480), (640, 600), (800, 600)):
                 call('AddVirtualDisplay', size)
             time.sleep(.1)
-            before = call('ListVirtualDisplays')
+            before = sorted(call('ListVirtualDisplays'), key=lambda entry: entry['id'])
             assert len(before) == 4, before
+            assert [entry['id'] for entry in before] == ['BreezyDesktop_1', 'BreezyDesktop_2', 'BreezyDesktop_3', 'BreezyDesktop_4'], before
+            # The XR lifecycle must remember virtual outputs across disable/enable while removing
+            # them from KWin during disable.
+            buffer[1] = 0
+            deadline = time.monotonic() + 4
+            while time.monotonic() < deadline:
+                publish();app.processEvents();time.sleep(.05)
+                if call('ListVirtualDisplays') == []:break
+            assert call('ListVirtualDisplays') == [], 'disable did not remove virtual outputs'
+            profile = pathlib.Path(os.environ['XDG_STATE_HOME']) / 'breezy_desktop/virtual-displays.json'
+            assert profile.exists(), 'disable did not persist virtual display profile'
+            saved = json.loads(profile.read_text())
+            assert [entry['id'] for entry in saved['entries']] == [entry['id'] for entry in before], saved
+            profile.write_text('{ deliberately corrupt profile')
+            buffer[1] = 1
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                publish();app.processEvents();time.sleep(.05)
+                if call('ListVirtualDisplays'):break
+            assert call('ListVirtualDisplays') == [], 'corrupt profile must not restore virtual outputs'
+            buffer[1] = 0
+            deadline = time.monotonic() + 4
+            while time.monotonic() < deadline:
+                publish();app.processEvents();time.sleep(.05)
+                if pathlib.Path(profile).read_text() == '{ deliberately corrupt profile':break
+            assert profile.read_text() == '{ deliberately corrupt profile', 'corrupt profile was overwritten'
+            profile.write_text(json.dumps(saved))
+            buffer[1] = 1
+            deadline = time.monotonic() + 5
+            restored = []
+            while time.monotonic() < deadline:
+                publish();app.processEvents();time.sleep(.05)
+                restored = sorted(call('ListVirtualDisplays'), key=lambda entry: entry['id'])
+                if len(restored) == 4:break
+            assert restored == before, (before, restored)
             for attempt in range(3):
                 pair = subprocess.run([os.environ['KCM_RELOAD_TEST'], '--busy'], text=True, capture_output=True, timeout=6)
                 assert pair.returncode == 0, pair.stderr
@@ -98,7 +133,7 @@ def inside():
                     status = call('ReloadStatus')
                     if status['state'] != 'pending':break
                 assert status['state'] == 'ready' and status['outputsPreserved'], status
-                assert call('ListVirtualDisplays') == before, 'virtual output handles changed'
+                assert sorted(call('ListVirtualDisplays'), key=lambda entry: entry['id']) == before, 'virtual output handles changed'
                 assert process.poll() is None, 'KWin crashed'
             qml = pathlib.Path(os.environ['XDG_DATA_HOME']) / 'kwin/effects/breezy_desktop/qml/main.qml'
             original = qml.read_text()
@@ -110,7 +145,7 @@ def inside():
                 status = call('ReloadStatus')
                 if status['state'] != 'pending':break
             assert status['state'] == 'error' and not status['running'], status
-            assert call('ListVirtualDisplays') == before, 'QML failure deleted virtual displays'
+            assert sorted(call('ListVirtualDisplays'), key=lambda entry: entry['id']) == before, 'QML failure deleted virtual displays'
             qml.write_text(original)
             call('ReloadScene')
             deadline = time.monotonic() + 5
@@ -119,7 +154,7 @@ def inside():
                 status = call('ReloadStatus')
                 if status['state'] != 'pending':break
             assert status['state'] == 'ready' and status['outputsPreserved'], status
-            assert call('ListVirtualDisplays') == before
+            assert sorted(call('ListVirtualDisplays'), key=lambda entry: entry['id']) == before
             loadedId = status['loadedBuildId']
             plugin = pathlib.Path(status['pluginPath'])
             replacement = plugin.with_suffix('.updated.so')
